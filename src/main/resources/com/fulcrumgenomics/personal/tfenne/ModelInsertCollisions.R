@@ -32,10 +32,19 @@ data$input_dna = factor(data$input_dna)
 
 isize = unique(data$mean_insert_size)
 sd    = unique(data$sd_insert_size)
-title = paste("Family Sizes using start/stop with Insert Size mean=", isize, "and sd=", sd)
+
+title1 = paste("Family Sizes w/start-stop w/Insert Size mean =", isize, "and sd =", sd)
+title2 = paste("Cumulative Family Sizes w/start-stop w/Insert Size mean =", isize, "and sd =", sd)
 
 pdf(output)
+  # regular plot
   ggplot(data) + aes(x=family_size, y=fraction_of_families, color=input_dna) + geom_line() +
     scale_y_log10() +
-    labs(x="Family size using start/stop alone", y="Fraction of Families at Size", title=title)
+    labs(x="Family size using start/stop alone", y="Fraction of Families at Size", title=title1)
+
+  # cumulative plot
+  ggplot(data) + aes(x=family_size, y=cumulative_fraction, color=input_dna) + geom_line() +
+    scale_y_continuous(limits=c(0, 1)) +
+    labs(x="Family size using start/stop alone", y="Fraction of Families <= Size", title=title2)
+
 dev.off()

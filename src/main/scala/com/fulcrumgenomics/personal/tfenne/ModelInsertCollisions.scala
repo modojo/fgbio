@@ -80,7 +80,10 @@ class ModelInsertCollisions
 
       // Generate the metrics
       val total = freqOfFreqs.map(_._2).sum.toDouble
+      var cumulative = 0L
       val metrics = freqOfFreqs.map { case (familySize, count) =>
+        cumulative += count
+
         InsertCollisionMetric(
           input_dna            = input,
           genome_copies        = copies,
@@ -88,7 +91,8 @@ class ModelInsertCollisions
           sd_insert_size       = sd,
           family_size          = familySize.toInt,
           family_count         = count,
-          fraction_of_families =  count / total
+          fraction_of_families = count / total,
+          cumulative_fraction  = cumulative / total
         )
       }
 
@@ -98,7 +102,7 @@ class ModelInsertCollisions
     val txtOutput = output.resolveSibling(output.getFileName + ".txt")
     val pdfOutput = output.resolveSibling(output.getFileName + ".pdf")
 
-    Metric.write(output, allMetrics)
+    Metric.write(txtOutput, allMetrics)
     Rscript.exec(ScriptPath, txtOutput.toString, pdfOutput.toString)
   }
 }
@@ -111,5 +115,6 @@ case class InsertCollisionMetric
   sd_insert_size: Double,
   family_size: Int,
   family_count: Long,
-  fraction_of_families: Double
+  fraction_of_families: Double,
+  cumulative_fraction: Double
 ) extends Metric
