@@ -33,6 +33,7 @@ import htsjdk.samtools.{SAMFileHeader, SAMRecordCoordinateComparator, SAMRecordQ
 import htsjdk.samtools.SAMFileHeader.{GroupOrder, SortOrder}
 
 object SamOrderTest {
+  val RandomIntegerTag: String = "ZZ"
   // Builder to for a set of records to be used in testing sorting
   val builder = new SamBuilder(sort=None)
   val random  = new Random(42)
@@ -40,6 +41,7 @@ object SamOrderTest {
     builder.addPair(name="q"+random.nextInt(), contig=random.nextInt(23), start1=random.nextInt(1e7.toInt)+1, start2=random.nextInt(1e7.toInt)+1)
   }
   Range.inclusive(1, 10).foreach { i => builder.addPair(name="q"+random.nextInt(), unmapped1=true, unmapped2=true)}
+  builder.foreach { rec => rec(RandomIntegerTag) = rec.name.drop(1).toInt }
 }
 
 class SamOrderTest extends UnitSpec {
@@ -90,14 +92,14 @@ class SamOrderTest extends UnitSpec {
     val f = SamOrder.Coordinate.sortkey
     val recs = SamOrderTest.builder.iterator.toSeq.sortBy(f(_))
     val comp = new SAMRecordCoordinateComparator()
-    recs.grouped(2).foreach { case Seq(lhs,rhs) => comp.fileOrderCompare(lhs.asSam, rhs.asSam) <= 0 shouldBe true }
+    recs.sliding(2).foreach { case Seq(lhs,rhs) => comp.fileOrderCompare(lhs.asSam, rhs.asSam) <= 0 shouldBe true }
   }
 
   "SamOrder.Queryname" should "sort reads into queryname order" in {
     val f = SamOrder.Queryname.sortkey
     val recs = SamOrderTest.builder.iterator.toSeq.sortBy(f(_))
     val comp = new SAMRecordQueryNameComparator()
-    recs.grouped(2).foreach { case Seq(lhs,rhs) => comp.fileOrderCompare(lhs.asSam, rhs.asSam) <= 0 shouldBe true }
+    recs.sliding(2).foreach { case Seq(lhs,rhs) => comp.fileOrderCompare(lhs.asSam, rhs.asSam) <= 0 shouldBe true }
   }
 
   "SamOrder.Random" should "randomize the order of the reads" in {
@@ -108,7 +110,7 @@ class SamOrderTest extends UnitSpec {
     val counter1 = new SimpleCounter[Int]()
     val counter2 = new SimpleCounter[Int]()
 
-    recs.grouped(2).foreach { case Seq(r1, r2) =>
+    recs.sliding(2).foreach { case Seq(r1, r2) =>
       counter1.count(comp1.fileOrderCompare(r1.asSam, r2.asSam))
       counter2.count(comp2.fileOrderCompare(r1.asSam, r2.asSam))
     }
@@ -134,5 +136,73 @@ class SamOrderTest extends UnitSpec {
     }
 
     counts.foreach { case (name, count) => count shouldBe 1}
+  }
+
+  "SamOrder.ByTag" should "should sort by a tag" in {
+    // check that we are not in sorted order already
+    SamOrderTest.builder.iterator.sliding(2).exists { case Seq(lhs,rhs) =>
+      lhs[Int](SamOrderTest.RandomIntegerTag) > rhs[Int](SamOrderTest.RandomIntegerTag)
+    } shouldBe true
+    val f = SamOrder.ByTag[Int](SamOrderTest.RandomIntegerTag).sortkey
+    val recs = SamOrderTest.builder.iterator.toSeq.sortBy(f(_))
+    recs.sliding(2).foreach { case Seq(lhs,rhs) =>
+      lhs[Int](SamOrderTest.RandomIntegerTag) <= rhs[Int](SamOrderTest.RandomIntegerTag) shouldBe true
+    }
+  }
+
+  it should "fail if the tag is required (no missing value)" in {
+    // create some records _without_ tags
+    val builder = new SamBuilder(sort=None)
+    Range.inclusive(1, 10).foreach { i => builder.addPair(name="q"+SamOrderTest.random.nextInt(), unmapped1=true, unmapped2=true)}
+    val f = SamOrder.ByTag[Int](SamOrderTest.RandomIntegerTag).sortkey
+    an[IllegalStateException] should be thrownBy (SamOrderTest.builder.iterator ++ builder.iterator).toSeq.sortBy(f(_))
+  }
+
+  it should "handle missing tags when a missing value is given" in {
+    // create some records _without_ tags
+    val builder = new SamBuilder(sort=None)
+    Range.inclusive(1, 10).foreach { i => builder.addPair(name="q"+SamOrderTest.random.nextInt(), unmapped1=true, unmapped2=true)}
+    val f = SamOrder.ByTag[Int](SamOrderTest.RandomIntegerTag, missingValue=Some(Int.MaxValue)).sortkey
+    val recs = (SamOrderTest.builder.iterator ++ builder.iterator).toSeq.sortBy(f(_))
+    recs.sliding(2).foreach { case Seq(lhs,rhs) =>
+      val lhsValue = lhs.get[Int](SamOrderTest.RandomIntegerTag).getOrElse(Int.MaxValue)
+      val rhsValue = rhs.get[Int](SamOrderTest.RandomIntegerTag).getOrElse(Int.MaxValue)
+      lhsValue <= rhsValue shouldBe true
+    }
+  }
+
+  "SamOrder.ByTagWithTransform" should "should sort by a tag" in {
+    // check that we are not in sorted order already
+    SamOrderTest.builder.iterator.sliding(2).exists { case Seq(lhs,rhs) =>
+      lhs[Int](SamOrderTest.RandomIntegerTag) > rhs[Int](SamOrderTest.RandomIntegerTag)
+    } shouldBe true
+    val f = SamOrder.ByTagWithTransform[Int, String](SamOrderTest.RandomIntegerTag, transform=in => f"${Math.abs(in)}%020d").sortkey
+    val recs = SamOrderTest.builder.iterator.toSeq.sortBy(f(_))
+    recs.sliding(2).foreach { case Seq(lhs,rhs) =>
+      val lhsValue = Math.abs(lhs[Int](SamOrderTest.RandomIntegerTag))
+      val rhsValue = Math.abs(rhs[Int](SamOrderTest.RandomIntegerTag))
+      lhsValue <= rhsValue shouldBe true
+    }
+  }
+
+  it should "fail if the tag is required (no missing value)" in {
+    // create some records _without_ tags
+    val builder = new SamBuilder(sort=None)
+    Range.inclusive(1, 10).foreach { i => builder.addPair(name="q"+SamOrderTest.random.nextInt(), unmapped1=true, unmapped2=true)}
+    val f = SamOrder.ByTagWithTransform[Int, String](SamOrderTest.RandomIntegerTag, transform=in => f"${Math.abs(in)}%020d").sortkey
+    an[IllegalStateException] should be thrownBy (SamOrderTest.builder.iterator ++ builder.iterator).toSeq.sortBy(f(_))
+  }
+
+  it should "handle missing tags when a missing value is given" in {
+    // create some records _without_ tags
+    val builder = new SamBuilder(sort=None)
+    Range.inclusive(1, 10).foreach { i => builder.addPair(name="q"+SamOrderTest.random.nextInt(), unmapped1=true, unmapped2=true)}
+    val f = SamOrder.ByTagWithTransform[Int, String](SamOrderTest.RandomIntegerTag, transform=in => f"${Math.abs(in)}%020d", missingValue=Some(Int.MaxValue)).sortkey
+    val recs = (SamOrderTest.builder.iterator ++ builder.iterator).toSeq.sortBy(f(_))
+    recs.sliding(2).foreach { case Seq(lhs,rhs) =>
+      val lhsValue = Math.abs(lhs.get[Int](SamOrderTest.RandomIntegerTag).getOrElse(Int.MaxValue))
+      val rhsValue = Math.abs(rhs.get[Int](SamOrderTest.RandomIntegerTag).getOrElse(Int.MaxValue))
+      lhsValue <= rhsValue shouldBe true
+    }
   }
 }

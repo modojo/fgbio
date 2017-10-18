@@ -220,5 +220,58 @@ object SamOrder {
     override val subSort:    Option[String] = None
     override def sortkey: SamRecord => A = throw new UnsupportedOperationException("Sorting not supported for Unknown order.")
   }
+
+  /** Sorting key used by the [[ByTag]] and [[ByTagWithTransform]] sorts. */
+  case class ByTagKey[TagType](value: TagType)(implicit ordering: Ordering[TagType]) extends Ordered[ByTagKey[TagType]] {
+    override def compare(that: ByTagKey[TagType]): Int = ordering.compare(this.value, that.value)
+  }
+
+  /** Ordering for when sorting by a SAM tag.
+    *
+    * @param tag the two-letter sam tag
+    * @param missingValue if present, the value given when the tag is not present, otherwise the tag must be present on all records
+    * @tparam TagType the type of the tag.
+    */
+  case class ByTag[TagType](tag: String,
+                            missingValue: Option[TagType] = None)
+                           (implicit ordering: Ordering[TagType]) extends SamOrder {
+    require(tag.length == 2, s"SAM tag must have length two: '$tag'")
+    override type A = ByTagKey[TagType]
+    override val sortOrder:  SortOrder      = SortOrder.unsorted
+    override val groupOrder: GroupOrder     = GroupOrder.query
+    override val subSort:    Option[String] = Some("by-tag-" + tag)
+    override val sortkey: SamRecord => A = rec => ByTagKey(
+      rec.get[TagType](tag).getOrElse {
+        throw new IllegalStateException(s"Missing value for tag '$tag' in record: $rec")
+      }
+    )
+  }
+
+  /** Ordering for when sorting by a SAM tag, with a custom transformation of the value to an ordered key, namely
+    * `TransformResult` must extend `Ordered[TransformResult]`
+    *
+    * @param tag the two-letter sam tag
+    * @param missingValue if present, the value given when the tag is not present, otherwise the tag must be present on all records
+    * @param transform a method to transform the SAM tag value to a value on which to sort
+    * @tparam TagType the type of the tag.
+    * @tparam TransformResult the type of the value on which to sort.
+    */
+  case class ByTagWithTransform[TagType,TransformResult](tag: String,
+                                                         transform: TagType => TransformResult,
+                                                         missingValue: Option[TagType] = None)
+                                                        (implicit ordering: Ordering[TransformResult]) extends SamOrder {
+    require(tag.length == 2, s"SAM tag must have length two: '$tag'")
+    override type A = ByTagKey[TransformResult]
+    override val sortOrder:  SortOrder      = SortOrder.unsorted
+    override val groupOrder: GroupOrder     = GroupOrder.query
+    override val subSort:    Option[String] = Some("by-tag-" + tag)
+    override val sortkey: SamRecord => A = rec => ByTagKey(
+      transform(
+        rec.get[TagType](tag).getOrElse {
+          missingValue.getOrElse { throw new IllegalStateException(s"Missing value for tag '$tag' in record: $rec")}
+        }
+      )
+    )
+  }
 }
 
